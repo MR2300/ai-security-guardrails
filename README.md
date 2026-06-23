@@ -39,20 +39,9 @@ This is **OWASP LLM06: Sensitive Information Disclosure** — and it is one of t
 
 ---
 
-## Document Corpus
+## Document Corpus and User Clearance Levels
 
-10 documents across Finance, HR, IT, and Procurement with 4 sensitivity levels:
-
-| Sensitivity | Examples |
-|---|---|
-| Public | Office holiday schedule, company mission |
-| Internal | Vendor onboarding policy, approved vendor list |
-| Confidential | Q4 financial summary, board meeting minutes |
-| Highly Confidential | Payroll data, salary matrix, IT credentials, incident response playbook |
-
----
-
-## Users and Clearance Levels
+10 documents across Finance, HR, IT, and Procurement with 4 sensitivity levels. Each user has a clearance level that determines what they can access.
 
 | User | Role | Clearance | Can Access |
 |---|---|---|---|
@@ -60,6 +49,112 @@ This is **OWASP LLM06: Sensitive Information Disclosure** — and it is one of t
 | alice | HR Coordinator | Internal | Public + Internal |
 | bob | Finance Manager | Confidential | + Confidential |
 | carol | IT Director | Highly Confidential | Everything |
+
+![User Clearance Levels](screenshots/project2_user%20can%20access.png)
+
+---
+
+## Vulnerable RAG — No Access Controls
+
+Dave (External Contractor — Public clearance) asks about salaries. The system retrieves Highly Confidential payroll documents and the LLM summarizes individual salary data. No clearance check. No filtering. Complete data breach.
+
+![Vulnerable RAG](screenshots/project2_vulnerable.png)
+
+```
+[RETRIEVED DOCUMENTS — no filtering]
+  1. [Highly Confidential] Payroll Processing Run — June 2026
+  2. [Highly Confidential] Employee Salary Band Matrix
+  3. [Confidential] Q4 2025 Financial Summary
+
+[LLM RESPONSE]
+Sarah Chen's salary is $13,200. James Okafor's salary is $9,100...
+```
+
+---
+
+## Secure RAG — Access Controls Enforced
+
+Same user, same query — completely different outcome. Every sensitive document is blocked before the LLM ever sees it. Hard refusal returned.
+
+![Secure RAG](screenshots/project2_secured.png)
+
+```
+[ACCESS CONTROL]
+  BLOCKED  [Highly Confidential] Payroll Processing Run — June 2026
+  BLOCKED  [Highly Confidential] Employee Salary Band Matrix
+  BLOCKED  [Confidential] Q4 2025 Financial Summary
+
+[REFUSAL] Access denied. You do not have clearance to view documents
+relevant to this query. Your clearance: Public.
+```
+
+---
+
+## The Code Difference — What Changed
+
+The vulnerable version sends all retrieved documents straight to the LLM. The secure version checks each document against the user's clearance level first.
+
+**Without clearance check:**
+
+![No Clearance Check](screenshots/project2_no%20clearance.png)
+
+**With clearance check:**
+
+![With Clearance Check](screenshots/project2_with%20clearance.png)
+
+---
+
+## Security Controls Implemented
+
+### 1. Pre-Retrieval Clearance Filtering
+Documents are filtered against the user's clearance level **before** being passed to the LLM. The LLM never sees unauthorized content — not even as context it "won't use."
+
+### 2. Sensitivity-Aware Redaction
+For documents at the boundary of a user's clearance, sensitive tokens (amounts, IDs, emails) are masked before the content reaches the LLM.
+
+### 3. Hard Refusal Logic
+If no cleared documents are available for a query, the system refuses entirely — the LLM is not called at all.
+
+### 4. Full Audit Log
+Every query is logged with: timestamp, username, clearance level, query text, access decision, blocked document list, cleared document list, and LLM response.
+
+![Audit Log](screenshots/project2_audit%20logs%20timestamp.png)
+
+---
+
+## Control Mapping
+
+12 controls mapped across 4 frameworks — every control links a vulnerable state to a remediated state with evidence.
+
+![Control Mapping](screenshots/project2_control%20mapping.png)
+
+| Control | Framework | What It Covers |
+|---|---|---|
+| LLM06 | OWASP LLM Top 10 | Sensitive Information Disclosure — core vulnerability reproduced and remediated |
+| LLM01 | OWASP LLM Top 10 | Prompt Injection — system prompt isolation |
+| LLM02 | OWASP LLM Top 10 | Insecure Output Handling — redaction layer |
+| GOVERN-1 | NIST AI RMF | Policies and accountability — clearance hierarchy |
+| MAP-3 | NIST AI RMF | Risk identification — oversharing risk mapped |
+| MEASURE-2 | NIST AI RMF | Risk monitoring — audit log |
+| MANAGE-1 | NIST AI RMF | Risk response — three-layer control |
+| AML-T0048 | MITRE ATLAS | LLM Data Disclosure attack technique |
+| AML-T0051 | MITRE ATLAS | LLM Prompt Injection via RAG |
+| 6.1 | ISO/IEC 42001 | AI Risk Assessment |
+| 6.2 | ISO/IEC 42001 | AI Risk Treatment |
+| 8.4 | ISO/IEC 42001 | AI System Logging and Monitoring |
+
+---
+
+## Why the Fix Must Happen Before the LLM
+
+A common misconception is that LLM safety training is a security control. It is not:
+
+- A different model with less safety training would expose credentials directly
+- The unauthorized document was already retrieved and sent to the LLM
+- An attacker can rephrase queries to bypass model-level refusals
+- LLM behavior is non-deterministic and cannot be relied on as a security boundary
+
+**The fix must be architectural — filter before retrieval, not after.**
 
 ---
 
@@ -95,82 +190,7 @@ Open `report.html` in your browser.
 
 ---
 
-## Before vs After — Same Query, Different Outcome
+## Related Projects
 
-**Dave (External Contractor — Public clearance) asks about salaries:**
-
-Vulnerable:
-```
-[RETRIEVED DOCUMENTS — no filtering]
-  1. [Highly Confidential] Payroll Processing Run — June 2026
-  2. [Highly Confidential] Employee Salary Band Matrix
-  3. [Confidential] Q4 2025 Financial Summary
-
-[LLM RESPONSE]
-Sarah Chen's salary is $13,200. James Okafor's salary is $9,100...
-```
-
-Secure:
-```
-[ACCESS CONTROL]
-  BLOCKED  [Highly Confidential] Payroll Processing Run — June 2026
-  BLOCKED  [Highly Confidential] Employee Salary Band Matrix
-  BLOCKED  [Confidential] Q4 2025 Financial Summary
-
-[REFUSAL] Access denied. You do not have clearance to view documents
-relevant to this query. Your clearance: Public.
-```
-
----
-
-## Security Controls Implemented
-
-### 1. Pre-Retrieval Clearance Filtering
-Documents are filtered against the user's clearance level **before** being passed to the LLM. The LLM never sees unauthorized content — not even as context it "won't use."
-
-### 2. Sensitivity-Aware Redaction
-For documents at the boundary of a user's clearance, sensitive tokens (amounts, IDs, emails) are masked before the content reaches the LLM.
-
-### 3. Hard Refusal Logic
-If no cleared documents are available for a query, the system refuses entirely — the LLM is not called at all.
-
-### 4. Full Audit Log
-Every query is logged with: timestamp, username, clearance level, query text, access decision, blocked document list, cleared document list, and LLM response.
-
----
-
-## Control Mapping
-
-| Control | Framework | What It Covers |
-|---|---|---|
-| LLM06 | OWASP LLM Top 10 | Sensitive Information Disclosure — core vulnerability reproduced and remediated |
-| LLM01 | OWASP LLM Top 10 | Prompt Injection — system prompt isolation |
-| LLM02 | OWASP LLM Top 10 | Insecure Output Handling — redaction layer |
-| GOVERN-1 | NIST AI RMF | Policies and accountability — clearance hierarchy |
-| MAP-3 | NIST AI RMF | Risk identification — oversharing risk mapped |
-| MEASURE-2 | NIST AI RMF | Risk monitoring — audit log |
-| MANAGE-1 | NIST AI RMF | Risk response — three-layer control |
-| AML-T0048 | MITRE ATLAS | LLM Data Disclosure attack technique |
-| AML-T0051 | MITRE ATLAS | LLM Prompt Injection via RAG |
-| 6.1 | ISO/IEC 42001 | AI Risk Assessment |
-| 6.2 | ISO/IEC 42001 | AI Risk Treatment |
-| 8.4 | ISO/IEC 42001 | AI System Logging and Monitoring |
-
----
-
-## Why the Fix Must Happen Before the LLM
-
-A common misconception is that LLM safety training is a security control. It is not:
-
-- A different model with less safety training would expose credentials directly
-- The unauthorized document was already retrieved and sent to the LLM
-- An attacker can rephrase queries to bypass model-level refusals
-- LLM behavior is non-deterministic and cannot be relied on as a security boundary
-
-**The fix must be architectural — filter before retrieval, not after.**
-
----
-
-## Related Project
-
-[IAM Governance Program](https://github.com/MR2300/iam-governance-program) — end-to-end simulated IAM governance program covering RBAC, Keycloak deployment, SoD violation detection, access certification, and ISO 27001 / NIST 800-53 control mapping.
+- [IAM Governance Program](https://github.com/MR2300/iam-governance-program) — RBAC design, Keycloak deployment, SoD violation detection, access certification, ISO 27001 / NIST 800-53 control mapping
+- [Active Directory Lab](https://github.com/MR2300/active-directory-lab) — Windows Server DC + Ubuntu workstation, cross-platform AD authentication, Group Policy, security monitoring
